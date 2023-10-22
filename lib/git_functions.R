@@ -14,5 +14,5 @@ create_git_token<-function(){
 
 create_git_repo<-function(){
   ## create github repository and configure as git remote
-  use_github()
+  usethis::use_github()
 }
