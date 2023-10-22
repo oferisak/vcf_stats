@@ -1,0 +1,104 @@
+---
+title: "VCF Stats"
+author: "Ofer Isakov"
+date: '2023-10-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+analysis_setup_file<-'./config/template.analysis_setup.txt'
+knitr::opts_chunk$set(echo = TRUE)
+project_dir<-'/media/SSD/Bioinformatics/Projects/vcf_stats'
+setwd(project_dir)
+library(ProjectTemplate)
+load.project()
+```
+
+```{r prep_analysis}
+main_output_prefix<-analysis_setup$main_output_folder_prefix
+main_output_folder<-glue('./output/{main_output_prefix}.vcf_stats.{Sys.Date()}')
+if (!dir.exists(main_output_folder)){dir.create(main_output_folder)}
+summary_folder<-glue('{main_output_folder}/summary')
+if (!dir.exists(summary_folder)){dir.create(summary_folder)}
+
+system(glue('cp {analysis_setup_file} {main_output_folder}'))
+write.table(input_vcfs,file=glue('{main_output_folder}/vcf_files.txt'),row.names = F,sep='\t')
+```
+
+```{r merge_input_vcfs}
+merged_vcf<-
+  merge_vcfs(bcftools_path = analysis_setup$bcftools_path,
+           vcf_files = input_vcfs%>%pull(file),
+           output_folder = main_output_folder,
+           merged_file_prefix = main_output_prefix)
+```
+
+```{r parse_vcf}
+merged_vcf_parsed<-vcf_to_tidy(merged_vcf)
+```
+
+```{r generate_stats_table}
+# summarize variant depth per individual
+dp_summary<-merged_vcf_parsed$gt%>%group_by(Indiv)%>%summarize(n_vars=sum(!is.na(gt_GT)),skimr::skim_without_charts(gt_DP))%>%
+  select(-c('skim_type','skim_variable'))
+write.table(dp_summary,file=glue('{summary_folder}/{main_output_prefix}.depth_summary.txt'),sep='\t',row.names = F)
+keep_gts=c('0/1','1/1','1/2','0/2')
+# summarize by genotype
+## summarize depth
+gt_dp_summary<-merged_vcf_parsed$gt%>%filter(!is.na(gt_GT))%>%group_by(Indiv,gt_GT)%>%summarize(meanDP=mean(gt_DP))
+gt_dp_summary_wider<-gt_dp_summary%>%filter(gt_GT%in%keep_gts)%>%
+  pivot_wider(id_cols = Indiv,names_from = gt_GT,values_from = c(meanDP))
+write.table(gt_dp_summary_wider,file=glue('{summary_folder}/{main_output_prefix}.genotype_depth_summary.txt'),sep='\t',row.names = F)
+## summarize count
+gt_n_summary<-merged_vcf_parsed$gt%>%filter(!is.na(gt_GT))%>%group_by(Indiv,gt_GT)%>%summarize(n=n())
+gt_n_summary_wider<-gt_n_summary%>%filter(gt_GT%in%keep_gts)%>%
+  pivot_wider(id_cols = Indiv,names_from = gt_GT,values_from = n)
+write.table(gt_n_summary_wider,file=glue('{summary_folder}/{main_output_prefix}.genotype_count_summary.txt'),sep='\t',row.names = F)
+# summarize by chromosome
+## summarize count
+chr_n_summary<-merged_vcf_parsed$gt%>%filter(!is.na(gt_GT))%>%group_by(Indiv,ChromKey)%>%summarize(n=n())
+chr_n_summary_wide<-chr_n_summary%>%pivot_wider(id_cols = Indiv,names_from = ChromKey,values_from = n)
+write.table(chr_n_summary_wide,file=glue('{summary_folder}/{main_output_prefix}.chr_count_summary.txt'),sep='\t',row.names = F)
+## summarize depth
+chr_depth_summary<-merged_vcf_parsed$gt%>%filter(!is.na(gt_GT))%>%group_by(Indiv,ChromKey)%>%summarize(meanDP=mean(gt_DP))
+chr_depth_summary_wide<-chr_depth_summary%>%pivot_wider(id_cols = Indiv,names_from = ChromKey,values_from = meanDP)
+write.table(chr_depth_summary_wide,file=glue('{summary_folder}/{main_output_prefix}.chr_depth_summary.txt'),sep='\t',row.names = F)
+```
+
+```{r run_kinship_analysis}
+num_o_samples<-dp_summary%>%pull(Indiv)%>%unique()%>%length()
+if (num_o_samples>1){
+  plink_output_folder<-glue('{normalizePath(main_output_folder)}/plink')
+  if (!dir.exists(plink_output_folder)){dir.create(plink_output_folder)}
+  merged_vcf<-normalizePath(merged_vcf)
+  # first generate plink bed file
+  setwd(plink_output_folder)
+  vcf_to_plink_bfiles(analysis_setup$plink_path,
+                      vcf_file = merged_vcf,
+                      bfiles_prefix = main_output_prefix,
+                      build = analysis_setup$build)
+  setwd(project_dir)
+  # now run king relatedness analysis
+  king_output_folder<-glue('{normalizePath(main_output_folder)}/king')
+  if (!dir.exists(king_output_folder)){dir.create(king_output_folder)}
+  setwd(king_output_folder)
+  king_output<-run_king_relatedness_analysis(analysis_setup$king_path,
+                                plink_bed = glue('{plink_output_folder}/{main_output_prefix}.bed'))
+  king_duplicates<-readr::read_delim(glue('{king_output_folder}/king.kin0'))
+  king_duplicates<-king_duplicates%>%filter(grepl('MZ',InfType))%>%select(-c('FID1','FID2'))
+  setwd(project_dir)
+  write.table(king_duplicates,file=glue('{summary_folder}/{main_output_prefix}.duplicate_samples.txt'),row.names = F,sep='\t')
+}
+```
+
+```{r produce_report}
+library(rmarkdown)
+library(knitr)
+library(shiny)
+output_dir <- glue("{main_output_folder}")
+render('./src/vcf_stats_report.Rmd', 
+       output_dir = output_dir,
+       output_file = glue('{main_output_prefix}.vcf_stats.{Sys.Date()}.html'),
+       params=list(main_output_folder=main_output_folder,
+                   main_output_prefix=main_output_prefix))
+```

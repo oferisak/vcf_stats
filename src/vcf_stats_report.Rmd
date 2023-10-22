@@ -1,0 +1,79 @@
+---
+title: "VCF stats"
+author: "Ofer Isakov"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: united
+    toc: true
+    toc_float: false
+params:
+    main_output_folder: ''
+    main_output_prefix: ''
+---
+
+```{r markdown_setup,include=FALSE}
+project_dir<-'/media/SSD/Bioinformatics/Projects/vcf_stats'
+knitr::opts_knit$set(root.dir=project_dir)
+knitr::opts_chunk$set(echo = F)
+library(ProjectTemplate)
+setwd(project_dir)
+load.project()
+
+main_output_folder<-params$main_output_folder
+main_output_prefix<-params$main_output_prefix
+vcf_files<-readr::read_delim(glue('{main_output_folder}/vcf_files.txt'),delim='\t')
+was_relatedness_analysis_performed<-dir.exists(glue('{main_output_folder}/king'))
+summary_files<-list.files(glue('{main_output_folder}/summary'),full.names = TRUE)
+```
+
+# VCF files
+
+```{r sample_sheet_table}
+DT::datatable(vcf_files,
+              options=list(scrollX=T),
+              filter = list(position = 'top', clear = FALSE))
+```
+
+# Summary tables
+
+## General Coverage Metrics
+
+```{r summary_table,message=FALSE}
+depth_summary<-grep('\\.depth_summary\\.',summary_files,value=T)
+DT::datatable(readr::read_delim(depth_summary,delim='\t')%>%mutate(across(where(is.numeric), ~ round(., 3))),
+              options=list(scrollX=T),
+              filter = list(position = 'top', clear = FALSE))
+```
+
+```{r summary_tables1,eval=T, results='asis',warning=FALSE,message=FALSE}
+summary_tables<-grep('\\.depth_summary\\.',summary_files,value=T,invert = T)
+for (summary_table_file in summary_tables){
+
+  summary_table_name<-stringr::str_replace(basename(summary_table_file),glue('{main_output_prefix}.'),'')%>%
+    stringr::str_replace_all('.txt','')%>%
+    stringr::str_replace_all('_',' ')%>%str_to_title()
+  summary_table<-readr::read_delim(summary_table_file,delim='\t')
+  cat('## ',summary_table_name,'  \n')
+  if (summary_table_name=='Duplicate Samples'){
+    if (nrow(summary_table)==0){cat('\nThere are no duplicate samples in the input VCFs.  \n')}
+    next
+  }
+  print(tagList(
+    DT::datatable(
+      summary_table%>%mutate(across(where(is.numeric), ~ round(., 3))),
+      extensions = 'Buttons',
+      options = list(
+        pageLength = 10,
+        scrollX = T,
+        dom = 'Bfrtip',
+        buttons = c('copy', 'csv', 'excel')
+      ),
+      height = 'auto',
+      filter = list(position = 'top', clear = FALSE)
+    ),
+  ))
+}
+cat('  \n')
+```
+

@@ -1,0 +1,7 @@
+param	value	options	comment
+king_path	/media/SSD/Bioinformatics/Tools/king		
+input_vcfs_path	./data/input_vcfs		
+build	b37	 'b36'/'hg18' = NCBI 36, 2709521/154584237; 'b37'/'hg19' = GRCh37, 2699520/154931044 ;'b38'/'hg38' = GRCh38, 2781479/155701383 	
+main_output_folder_prefix	test_run		
+bcftools_path	bcftools		
+plink_path	/media/SSD/Bioinformatics/Tools/plink/plink		
